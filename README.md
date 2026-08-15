@@ -75,19 +75,57 @@ authorization boundary.
 
 Create a dedicated Listmonk API account instead of using your primary administrator account.
 
-## Install
+## Install with uv (recommended)
+
+[`uv tool install`](https://docs.astral.sh/uv/guides/tools/) creates a persistent, isolated
+environment and exposes the `listmonk-mcp` command without modifying system Python packages.
+
+Install the current release directly from GitHub:
 
 ```bash
-git clone <your-repository-url> listmonk-mcp
+uv tool install \
+  --python 3.12 \
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.2.0"
+```
+
+Verify the installation and find the executable Hermes should launch:
+
+```bash
+uv tool list
+command -v listmonk-mcp
+```
+
+The executable is normally installed as:
+
+```text
+/home/rhyann/.local/bin/listmonk-mcp
+```
+
+Use the path returned by `command -v` rather than assuming it is on the service account's
+`PATH`. Hermes starts this stdio server when needed, so `listmonk-mcp` does not need a separate
+systemd service.
+
+To reinstall or move to a newer release, replace the tag and run:
+
+```bash
+uv tool install --reinstall \
+  --python 3.12 \
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.2.0"
+```
+
+To uninstall:
+
+```bash
+uv tool uninstall listmonk-mcp
+```
+
+## Install for development
+
+```bash
+git clone https://github.com/rhyann/listmonk-mcp.git
 cd listmonk-mcp
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
-```
-
-For development and tests:
-
-```bash
 python -m pip install -e '.[dev]'
 pytest
 ```
@@ -127,16 +165,15 @@ It will wait silently for an MCP host to communicate over standard input/output.
 
 ## Hermes configuration
 
-Install this repository on the same host as the restricted Hermes gateway, outside the
-newsletter workspace. For example, clone it to `/home/rhyann/mcp/listmonk-mcp` and install its
-virtual environment there.
+Install the tool on the same host and under the same Linux account as the restricted Hermes
+gateway. Keep source checkouts, if any, outside the newsletter workspace.
 
 Add the server to the newsletter profile's Hermes configuration:
 
 ```yaml
 mcp_servers:
   listmonk:
-    command: "/home/rhyann/mcp/listmonk-mcp/.venv/bin/listmonk-mcp"
+    command: "/home/rhyann/.local/bin/listmonk-mcp"
     env:
       LISTMONK_URL: "${LISTMONK_URL}"
       LISTMONK_USER: "${LISTMONK_USER}"
