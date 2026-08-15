@@ -18,7 +18,7 @@ def live_client() -> ListmonkClient:
     if os.environ.get("LISTMONK_INTEGRATION") != "1":
         pytest.skip("set LISTMONK_INTEGRATION=1 to run Docker integration tests")
     base_url = os.environ.get("LISTMONK_INTEGRATION_URL", "http://127.0.0.1:9000")
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + 120
     while True:
         try:
             if httpx.get(f"{base_url}/api/health", timeout=2).is_success:
@@ -26,7 +26,7 @@ def live_client() -> ListmonkClient:
         except httpx.HTTPError:
             pass
         if time.monotonic() >= deadline:
-            pytest.fail("Listmonk did not become healthy within 60 seconds")
+            pytest.fail("Listmonk did not become healthy within 120 seconds")
         time.sleep(1)
     return ListmonkClient(base_url, "smoke-test", "smoke-test")
 
