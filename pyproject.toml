@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "listmonk-mcp"
-version = "0.1.0"
-description = "A deliberately restricted MCP server for Listmonk newsletter campaigns"
+version = "0.2.0"
+description = "An explicit, safety-gated MCP interface for the Listmonk API"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -24,9 +24,13 @@ dev = [
 listmonk-mcp = "listmonk_mcp.server:main"
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q --cov=listmonk_mcp --cov-report=term-missing --cov-fail-under=100"
 testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.coverage.run]
 source = ["listmonk_mcp"]
 
+[tool.coverage.report]
+fail_under = 100
+show_missing = true

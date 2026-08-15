@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Any
 
 import httpx
+
+from .endpoints import ENDPOINTS
 
 
 class ListmonkClient:
@@ -18,6 +21,7 @@ class ListmonkClient:
         token: str,
         *,
         transport: httpx.BaseTransport | None = None,
+        allow_sensitive: bool = False,
     ) -> None:
         if not base_url.startswith(("http://", "https://")):
             raise ValueError("LISTMONK_URL must begin with http:// or https://")
@@ -31,6 +35,7 @@ class ListmonkClient:
             timeout=30.0,
             transport=transport,
         )
+        self._allow_sensitive = allow_sensitive
 
     def close(self) -> None:
         self._client.close()
@@ -41,6 +46,92 @@ class ListmonkClient:
         if "application/json" in response.headers.get("content-type", ""):
             return response.json()
         return response.text
+
+    def call_endpoint(
+        self,
+        endpoint_name: str,
+        *,
+        path_params: dict[str, str | int] | None = None,
+        query: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+        confirm: bool = False,
+    ) -> Any:
+        """Call one explicitly allow-listed endpoint."""
+        try:
+            endpoint = ENDPOINTS[endpoint_name]
+        except KeyError as exc:
+            raise ValueError(f"unknown endpoint: {endpoint_name}") from exc
+        if endpoint.confirmation_required and not confirm:
+            raise ValueError(f"{endpoint_name} requires confirm=true")
+        if endpoint.confirmation_required and not self._allow_sensitive:
+            raise PermissionError(
+                f"{endpoint_name} is disabled; set LISTMONK_ENABLE_SENSITIVE_TOOLS=true"
+            )
+
+        path = endpoint.path
+        for key, value in (path_params or {}).items():
+            token = "{" + key + "}"
+            if token not in path:
+                raise ValueError(f"unexpected path parameter: {key}")
+            if not str(value) or "/" in str(value) or ".." in str(value):
+                raise ValueError(f"invalid path parameter: {key}")
+            path = path.replace(token, str(value))
+        if "{" in path or "}" in path:
+            raise ValueError("missing required path parameter")
+
+        kwargs: dict[str, Any] = {}
+        if query:
+            kwargs["params"] = query
+        if body is not None:
+            kwargs["json"] = body
+        return self._request(endpoint.method, path, **kwargs)
+
+    def upload_file(
+        self,
+        path: str,
+        *,
+        filename: str,
+        content: bytes,
+        form: dict[str, str] | None = None,
+    ) -> Any:
+        if path not in {"/api/media", "/api/import/subscribers"}:
+            raise ValueError("upload path is not allow-listed")
+        if not filename or "/" in filename or "\\" in filename:
+            raise ValueError("filename must be a basename")
+        return self._request(
+            "POST",
+            path,
+            data=form or {},
+            files={"file": (filename, content, "application/octet-stream")},
+        )
+
+    def send_transactional_attachments(
+        self,
+        payload: dict[str, Any],
+        attachments: list[tuple[str, bytes]],
+        *,
+        confirm: bool = False,
+    ) -> Any:
+        if not confirm:
+            raise ValueError("send_transactional_with_attachments requires confirm=true")
+        if not self._allow_sensitive:
+            raise PermissionError(
+                "transactional delivery is disabled; set "
+                "LISTMONK_ENABLE_SENSITIVE_TOOLS=true"
+            )
+        if not attachments:
+            raise ValueError("at least one attachment is required")
+        files: list[tuple[str, tuple[str, bytes, str]]] = []
+        for filename, content in attachments:
+            if not filename or "/" in filename or "\\" in filename:
+                raise ValueError("attachment filename must be a basename")
+            files.append(("file", (filename, content, "application/octet-stream")))
+        return self._request(
+            "POST",
+            "/api/tx",
+            data={"data": json.dumps(payload)},
+            files=files,
+        )
 
     def get_campaign(self, campaign_id: int) -> dict[str, Any]:
         return self._request("GET", f"/api/campaigns/{campaign_id}")
@@ -172,4 +263,3 @@ class ListmonkClient:
                 f"campaign {campaign_id} is {campaign.get('status')!r}, not 'draft'"
             )
         return campaign
-

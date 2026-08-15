@@ -1,11 +1,39 @@
 # Listmonk MCP Server
 
-A small, deliberately restricted MCP server for managing Listmonk newsletter campaigns.
-It is designed for a host-side Hermes profile connected to Discord. It does **not** expose
-arbitrary API requests, subscriber management, list deletion, campaign deletion, or Listmonk
-administration.
+A comprehensive MCP interface for Listmonk. It exposes the documented API through explicit,
+allow-listed tools while retaining safer, higher-level tools for common newsletter workflows.
+There is no arbitrary URL or HTTP request tool.
 
-## Available tools
+## API coverage
+
+The server registers 65 endpoint tools across:
+
+- health, configuration, dashboard statistics, settings, logs, and administrative reload
+- subscribers, subscription state, list memberships, blocklists, exports, and opt-in mail
+- public and administrative mailing-list operations
+- subscriber imports and import logs
+- campaigns, previews, status changes, archives, running statistics, and analytics
+- saved templates, template rendering, and default-template selection
+- media uploads and management
+- bounce records and bounce ingestion
+- transactional messages
+
+Endpoint tools use an `api_` prefix, such as `api_list_subscribers`, `api_create_list`,
+`api_campaign_analytics`, and `api_get_settings`. Each accepts only the fields relevant to
+transporting that endpoint call:
+
+```json
+{
+  "path_params": {"subscriber_id": 42},
+  "query": {"source": "mcp"},
+  "body": {"name": "Ada"}
+}
+```
+
+The path itself is fixed in the server's endpoint registry. Callers cannot substitute an
+unregistered path.
+
+## Higher-level newsletter tools
 
 | Tool | Behavior |
 | --- | --- |
@@ -17,8 +45,27 @@ administration.
 | `send_newsletter_test` | Sends only to explicitly supplied test addresses |
 | `schedule_newsletter` | Schedules a draft at an explicit ISO-8601 time |
 
-Scheduling is the only operation that queues real delivery. The server verifies that the
-campaign is a draft before updating its `send_at` value and changing its status to `scheduled`.
+The higher-level scheduling tool verifies that the campaign is a draft before updating its
+`send_at` value and changing its status to `scheduled`.
+
+Two binary-safe tools accept base64 data rather than arbitrary host paths:
+
+- `upload_media`
+- `import_subscribers`
+- `send_transactional_with_attachments`
+
+## Sensitive-operation policy
+
+Destructive, delivery, settings, and administrative endpoint tools are disabled by default.
+They require two independent gates:
+
+1. The server administrator sets `LISTMONK_ENABLE_SENSITIVE_TOOLS=true`.
+2. Each individual tool call includes `confirm=true`.
+
+This applies to deletes, campaign status transitions, test and transactional sends, bulk query
+mutations, SMTP tests, settings updates, and administrative reloads. Use a Listmonk API role
+with only the permissions this MCP instance actually needs; Listmonk remains the final
+authorization boundary.
 
 ## Requirements
 
@@ -45,14 +92,18 @@ python -m pip install -e '.[dev]'
 pytest
 ```
 
+The default test command enforces 100% statement coverage. A coverage regression makes the
+test run fail.
+
 ## Configuration
 
-The server reads three environment variables:
+The server reads these environment variables:
 
 ```bash
 export LISTMONK_URL="https://listmonk.example.com"
 export LISTMONK_USER="hermes_newsletter"
 export LISTMONK_TOKEN="replace-me"
+export LISTMONK_ENABLE_SENSITIVE_TOOLS="false"
 ```
 
 Test the credentials independently before configuring MCP:
@@ -90,6 +141,7 @@ mcp_servers:
       LISTMONK_URL: "${LISTMONK_URL}"
       LISTMONK_USER: "${LISTMONK_USER}"
       LISTMONK_TOKEN: "${LISTMONK_TOKEN}"
+      LISTMONK_ENABLE_SENSITIVE_TOOLS: "false"
     tools:
       include:
         - get_campaign
@@ -100,6 +152,21 @@ mcp_servers:
         - send_newsletter_test
         - schedule_newsletter
 ```
+
+The example intentionally includes only the original newsletter workflow. Add endpoint tools
+to Hermes's `include` list by capability instead of exposing every tool to a Discord-facing
+profile. For example, a subscriber-management profile might add:
+
+```yaml
+        - api_list_subscribers
+        - api_get_subscriber
+        - api_create_subscriber
+        - api_patch_subscriber
+        - api_update_subscriber_lists
+```
+
+For a trusted administrative profile, omit the Hermes `include` filter or enumerate the full
+endpoint set and explicitly set `LISTMONK_ENABLE_SENSITIVE_TOOLS` to `true`.
 
 Keep credentials in the newsletter Hermes profile's private environment file rather than in
 the repository or Discord. Do not mount this repository into the newsletter Docker sandbox;
@@ -117,20 +184,34 @@ the timezone offset.
 
 ## Development
 
-The tests use `httpx.MockTransport`, so they never contact a real Listmonk server. They verify
-authentication, payload construction, draft-only guards, scheduling order, and HTTP error
-propagation.
+The 60 tests use `httpx.MockTransport`, so they never contact a real Listmonk server. They verify
+authentication, payload construction, draft-only guards, the endpoint registry, path-injection
+protection, sensitive-operation gates, multipart uploads, scheduling order, MCP tool exposure,
+environment configuration, wrapper delegation, the stdio entry point, and HTTP error
+propagation. The current suite covers 203 of 203 source statements (100%).
 
 ```bash
-pytest --cov=listmonk_mcp --cov-report=term-missing
+pytest
 ```
 
-The API surface intentionally contains no generic request helper exposed as an MCP tool. Add
-new actions as narrowly scoped methods and include tests for their authorization and state
-checks.
+Expected coverage summary:
+
+```text
+Name                            Stmts   Miss  Cover
+---------------------------------------------------
+src/listmonk_mcp/__init__.py        1      0   100%
+src/listmonk_mcp/api.py           117      0   100%
+src/listmonk_mcp/endpoints.py      11      0   100%
+src/listmonk_mcp/server.py         74      0   100%
+---------------------------------------------------
+TOTAL                             203      0   100%
+```
+
+The internal HTTP helper is never exposed as an MCP tool. Add new Listmonk endpoints to the
+explicit registry and include tests for their authorization and state checks.
 
 ## References
 
-- [Listmonk campaign API](https://listmonk.app/docs/apis/campaigns/)
+- [Listmonk API documentation](https://listmonk.app/docs/apis/apis/)
+- [Listmonk OpenAPI/Swagger specification](https://listmonk.app/docs/swagger/)
 - [Official MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
-
