@@ -12,6 +12,7 @@ from mcp.server import MCPServer
 
 from listmonk_mcp.api import ListmonkClient
 from listmonk_mcp.endpoints import ENDPOINTS
+from listmonk_mcp.contracts import CampaignAnalyticsQuery, dump_contract
 from listmonk_mcp import server
 
 
@@ -52,11 +53,20 @@ def test_client_close_and_text_response() -> None:
     client.close()
 
 
-@pytest.mark.parametrize("limit", [0, 101])
-def test_campaign_list_limit_validation(limit: int) -> None:
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"limit": 0}, "between 1 and 100"),
+        ({"limit": 101}, "between 1 and 100"),
+        ({"page": 0}, "page must be at least 1"),
+    ],
+)
+def test_campaign_list_pagination_validation(
+    kwargs: dict[str, int], message: str
+) -> None:
     client = make_client(lambda request: pytest.fail("HTTP should not occur"))
-    with pytest.raises(ValueError, match="between 1 and 100"):
-        client.list_campaigns(limit=limit)
+    with pytest.raises(ValueError, match=message):
+        client.list_campaigns(**kwargs)
 
 
 @pytest.mark.parametrize(
@@ -187,7 +197,7 @@ def test_high_level_server_wrappers_delegate(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(server, "_call", fake_call)
     assert server.get_campaign(1)["method"] == "get_campaign"
-    assert server.list_campaigns("q", "draft", 2)["method"] == "list_campaigns"
+    assert server.list_campaigns("q", "draft", 2, 3)["method"] == "list_campaigns"
     assert server.create_newsletter_draft("n", "s", "b", [1], "f", 1)["method"] == "create_draft"
     assert server.update_newsletter_draft(1, "n", "s", "b", [1], "f", 1)["method"] == "update_draft"
     assert server.preview_newsletter(1) == {"method": "preview"}
@@ -217,6 +227,151 @@ def test_generated_endpoint_tools_delegate_and_document_confirmation(
     assert len(calls) == 2
 
 
+def test_typed_contract_uses_openapi_aliases() -> None:
+    query = CampaignAnalyticsQuery.model_validate(
+        {"from": "2026-01-01", "to": "2026-02-01", "id": "1"}
+    )
+    assert dump_contract(query) == {
+        "from": "2026-01-01",
+        "to": "2026-02-01",
+        "id": "1",
+    }
+
+
+def test_subscriber_pagination_tool_passes_each_page_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_call(method: str, endpoint: str, **kwargs: Any) -> dict[str, Any]:
+        assert method == "call_endpoint"
+        assert endpoint == "api_list_subscribers"
+        calls.append(kwargs["query"])
+        return {"data": {"page": kwargs["query"]["page"]}}
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    assert server.api_list_subscribers(page=1, per_page=25)["data"]["page"] == 1
+    assert server.api_list_subscribers(
+        page=2,
+        per_page=25,
+        query="subscribers.email LIKE '%@example.com'",
+        list_ids=[1, 2],
+        subscription_status="confirmed",
+        order_by="email",
+        order="ASC",
+    )["data"]["page"] == 2
+    assert calls[0] == {
+        "page": 1,
+        "per_page": 25,
+        "order_by": "created_at",
+        "order": "DESC",
+    }
+    assert calls[1]["page"] == 2
+    assert calls[1]["list_id"] == [1, 2]
+    assert calls[1]["subscription_status"] == "confirmed"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"page": 0}, "page must be at least 1"),
+        ({"per_page": 0}, "per_page must be between"),
+        ({"per_page": 101}, "per_page must be between"),
+        ({"order": "sideways"}, "order must be ASC or DESC"),
+    ],
+)
+def test_subscriber_pagination_validation(
+    kwargs: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        server.api_list_subscribers(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("tool", "endpoint"),
+    [
+        (server.api_list_campaigns, "api_list_campaigns"),
+        (server.api_list_lists, "api_list_lists"),
+        (server.api_list_bounces, "api_list_bounces"),
+    ],
+)
+def test_other_paginated_tools_forward_distinct_pages(
+    monkeypatch: pytest.MonkeyPatch, tool, endpoint: str
+) -> None:
+    pages: list[int] = []
+
+    def fake_call(method: str, endpoint_name: str, **kwargs: Any) -> dict[str, Any]:
+        assert method == "call_endpoint"
+        assert endpoint_name == endpoint
+        pages.append(kwargs["query"]["page"])
+        return {"data": {"page": kwargs["query"]["page"]}}
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    assert tool(page=1)["data"]["page"] == 1
+    assert tool(page=2)["data"]["page"] == 2
+    assert pages == [1, 2]
+
+
+def test_paginated_collection_filters(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_call(method: str, endpoint: str, **kwargs: Any) -> dict[str, bool]:
+        calls.append((endpoint, kwargs["query"]))
+        return {"data": True}
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    assert server.api_list_campaigns(
+        query="weekly",
+        statuses=["draft"],
+        tags=["news"],
+        no_body=False,
+        order="asc",
+    )["data"]
+    assert server.api_list_lists(
+        query="members", status="active", tags=["public"], minimal=True
+    )["data"]
+    assert server.api_list_bounces(campaign_id=4, source="smtp")["data"]
+    assert calls[0][1]["status"] == ["draft"]
+    assert calls[0][1]["tags"] == ["news"]
+    assert calls[0][1]["order"] == "ASC"
+    assert calls[1][1]["tag"] == ["public"]
+    assert calls[1][1]["minimal"] is True
+    assert calls[2][1]["campaign_id"] == 4
+    assert calls[2][1]["source"] == "smtp"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"page": 0}, "page must be at least 1"),
+        ({"per_page": 0}, "per_page must be between"),
+        ({"per_page": 101}, "per_page must be between"),
+        ({"order": "sideways"}, "order must be ASC or DESC"),
+    ],
+)
+def test_shared_pagination_validation(kwargs: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        server.api_list_campaigns(**kwargs)
+
+
+def test_documented_all_pagination_and_type_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        server,
+        "_call",
+        lambda method, endpoint, **kwargs: kwargs["query"],
+    )
+    assert server.api_list_campaigns(per_page="all")["per_page"] == "all"
+    with pytest.raises(ValueError, match="integer or 'all'"):
+        server.api_list_campaigns(per_page=True)
+
+
+def test_bounce_campaign_filter_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="campaign_id must be positive"):
+        server.api_list_bounces(campaign_id=0)
+
+
 def test_upload_and_import_server_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
     monkeypatch.setattr(
@@ -226,14 +381,26 @@ def test_upload_and_import_server_tools(monkeypatch: pytest.MonkeyPatch) -> None
     )
     encoded = base64.b64encode(b"hello").decode()
     assert server.upload_media("image.png", encoded)["data"]
-    assert server.import_subscribers("people.csv", encoded, [1], "blocklist", True, ";")["data"]
+    assert server.import_subscribers(
+        "people.csv", encoded, [1], "blocklist", True, ";", "unconfirmed"
+    )["data"]
     params = json.loads(calls[1][2]["form"]["params"])
-    assert params == {"mode": "blocklist", "lists": [1], "overwrite": True, "delim": ";"}
+    assert params == {
+        "mode": "blocklist",
+        "lists": [1],
+        "overwrite": True,
+        "delim": ";",
+        "subscription_status": "unconfirmed",
+    }
 
     with pytest.raises(ValueError, match="mode"):
         server.import_subscribers("people.csv", encoded, [1], "invalid")
     with pytest.raises(ValueError, match="positive list ID"):
         server.import_subscribers("people.csv", encoded, [])
+    with pytest.raises(ValueError, match="subscription_status"):
+        server.import_subscribers(
+            "people.csv", encoded, [1], subscription_status="invalid"
+        )
 
 
 def test_attachment_server_tool_and_missing_fields(monkeypatch: pytest.MonkeyPatch) -> None:

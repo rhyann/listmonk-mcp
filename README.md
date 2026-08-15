@@ -6,17 +6,20 @@ There is no arbitrary URL or HTTP request tool.
 
 ## API coverage
 
-The server registers 65 endpoint tools across:
+The server registers 74 endpoint tools and covers all 72 operations in Listmonk's current
+Swagger specification, plus operations documented on Listmonk's narrative API pages:
 
 - health, configuration, dashboard statistics, settings, logs, and administrative reload
 - subscribers, subscription state, list memberships, blocklists, exports, and opt-in mail
 - public and administrative mailing-list operations
 - subscriber imports and import logs
-- campaigns, previews, status changes, archives, running statistics, and analytics
+- campaigns, HTML and text previews, content conversion, status changes, archives, running
+  statistics, and analytics
 - saved templates, template rendering, and default-template selection
 - media uploads and management
 - bounce records and bounce ingestion
 - transactional messages
+- language packs and subscriber, analytics, and subscription maintenance
 
 Endpoint tools use an `api_` prefix, such as `api_list_subscribers`, `api_create_list`,
 `api_campaign_analytics`, and `api_get_settings`. Each accepts only the fields relevant to
@@ -31,14 +34,44 @@ transporting that endpoint call:
 ```
 
 The path itself is fixed in the server's endpoint registry. Callers cannot substitute an
-unregistered path.
+unregistered path. OpenAPI-derived nested models give MCP clients typed schemas for documented
+query and body fields while allowing forward-compatible fields that may appear in newer
+Listmonk versions. Required query parameters, required request bodies, field types, and
+documented enums are validated before a request is sent. Endpoints documented as
+`application/x-www-form-urlencoded`, including unsaved template and campaign previews, use
+form encoding rather than JSON.
+
+All four paginated Listmonk collections have explicit pagination schemas:
+
+- `api_list_subscribers`
+- `api_list_campaigns`
+- `api_list_lists`
+- `api_list_bounces`
+
+Pass `page` and `per_page` as top-level arguments. For example:
+
+```json
+{
+  "page": 2,
+  "per_page": 50,
+  "list_ids": [1],
+  "subscription_status": "confirmed",
+  "order_by": "created_at",
+  "order": "DESC"
+}
+```
+
+Pages are one-based. These tools always forward both `page` and `per_page` to Listmonk. Integer
+page sizes are limited to 1–100, and the documented string value `"all"` is also supported.
+Because `"all"` can produce a large response, prefer bounded pages for interactive MCP use.
+The higher-level `list_campaigns` tool also accepts a top-level `page` argument.
 
 ## Higher-level newsletter tools
 
 | Tool | Behavior |
 | --- | --- |
 | `get_campaign` | Reads one campaign and its status |
-| `list_campaigns` | Lists recent campaigns with optional filters |
+| `list_campaigns` | Lists campaigns with optional filters and explicit page selection |
 | `create_newsletter_draft` | Creates a draft only |
 | `update_newsletter_draft` | Updates only campaigns that remain drafts |
 | `preview_newsletter` | Returns Listmonk's rendered preview |
@@ -48,11 +81,15 @@ unregistered path.
 The higher-level scheduling tool verifies that the campaign is a draft before updating its
 `send_at` value and changing its status to `scheduled`.
 
-Two binary-safe tools accept base64 data rather than arbitrary host paths:
+Three binary-safe tools accept base64 data rather than arbitrary host paths:
 
 - `upload_media`
 - `import_subscribers`
 - `send_transactional_with_attachments`
+
+`import_subscribers` supports Listmonk's documented `subscription_status` import option. Its
+accepted values are `confirmed`, `unconfirmed`, and `unsubscribed`; the default is
+`confirmed`.
 
 ## Sensitive-operation policy
 
@@ -85,7 +122,7 @@ Install the current release directly from GitHub:
 ```bash
 uv tool install \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.2.0"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.3.0"
 ```
 
 Verify the installation and find the executable Hermes should launch:
@@ -110,7 +147,7 @@ To reinstall or move to a newer release, replace the tag and run:
 ```bash
 uv tool install --reinstall \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.2.0"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.3.0"
 ```
 
 To uninstall:
@@ -219,13 +256,15 @@ Only after reads work should you test draft creation, preview, and a test email.
 `schedule_newsletter` as privileged: request an explicit campaign ID and timestamp, including
 the timezone offset.
 
-## Development
+## Development and contract checks
 
-The 60 tests use `httpx.MockTransport`, so they never contact a real Listmonk server. They verify
+The 86 default tests use `httpx.MockTransport`, so they never contact a real Listmonk server.
+They verify
 authentication, payload construction, draft-only guards, the endpoint registry, path-injection
 protection, sensitive-operation gates, multipart uploads, scheduling order, MCP tool exposure,
-environment configuration, wrapper delegation, the stdio entry point, and HTTP error
-propagation. The current suite covers 203 of 203 source statements (100%).
+environment configuration, form encoding, Swagger endpoint parity, request-contract validation,
+typed MCP schemas, wrapper delegation, the stdio entry point, and HTTP error propagation. The
+current suite covers 437 of 437 source statements (100%).
 
 ```bash
 pytest
@@ -237,15 +276,40 @@ Expected coverage summary:
 Name                            Stmts   Miss  Cover
 ---------------------------------------------------
 src/listmonk_mcp/__init__.py        1      0   100%
-src/listmonk_mcp/api.py           117      0   100%
-src/listmonk_mcp/endpoints.py      11      0   100%
-src/listmonk_mcp/server.py         74      0   100%
+src/listmonk_mcp/api.py           128      0   100%
+src/listmonk_mcp/contracts.py     135      0   100%
+src/listmonk_mcp/endpoints.py      15      0   100%
+src/listmonk_mcp/server.py        158      0   100%
 ---------------------------------------------------
-TOTAL                             203      0   100%
+TOTAL                             437      0   100%
 ```
 
-The internal HTTP helper is never exposed as an MCP tool. Add new Listmonk endpoints to the
-explicit registry and include tests for their authorization and state checks.
+Check the local contract against Listmonk's current upstream Swagger document:
+
+```bash
+python scripts/check_openapi_drift.py
+```
+
+The checker compares operations, form-versus-JSON encoding, required bodies and query fields,
+and path enums. CI runs it on every push and pull request and weekly so upstream additions or
+contract changes are visible even when this repository is idle. The known erroneous request body
+on Swagger's `GET /templates/{id}/preview` is ignored because the narrative documentation and
+HTTP behavior use a bodyless GET.
+
+## Pinned Docker integration test
+
+The safe live smoke test runs against `listmonk/listmonk:v6.2.0` and `postgres:17-alpine`. It
+checks health, public configuration, language packs, and public lists without performing writes.
+
+```bash
+docker compose -f tests/integration/docker-compose.yml up -d
+LISTMONK_INTEGRATION=1 pytest -m integration --no-cov
+docker compose -f tests/integration/docker-compose.yml down -v
+```
+
+The integration test is skipped during the normal unit suite and runs as a separate CI job. The
+internal HTTP helper is never exposed as an MCP tool. Add new Listmonk endpoints to the explicit
+registry and include tests for their authorization and state checks.
 
 ## References
 

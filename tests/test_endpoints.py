@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from listmonk_mcp.api import ListmonkClient
+from listmonk_mcp.contracts import BODY_MODELS, QUERY_MODELS
 from listmonk_mcp.endpoints import ENDPOINTS
 
 
@@ -29,6 +30,14 @@ def test_every_registered_endpoint_has_a_unique_tool_and_valid_path() -> None:
         assert endpoint.description
 
 
+def test_required_contracts_have_typed_mcp_models() -> None:
+    for name, endpoint in ENDPOINTS.items():
+        if endpoint.required_query:
+            assert name in QUERY_MODELS
+        if endpoint.body_required:
+            assert name in BODY_MODELS
+
+
 def test_allowlisted_endpoint_formats_path_query_and_body() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "PATCH"
@@ -45,6 +54,39 @@ def test_allowlisted_endpoint_formats_path_query_and_body() -> None:
         body={"name": "Ada"},
     )
     assert response["data"]["id"] == 42
+
+
+def test_form_endpoint_uses_urlencoded_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/templates/preview"
+        assert request.headers["content-type"].startswith(
+            "application/x-www-form-urlencoded"
+        )
+        assert request.content == b"template_type=campaign&body=Hello"
+        return httpx.Response(200, text="<p>Hello</p>")
+
+    client = make_client(handler)
+    assert client.call_endpoint(
+        "api_render_template_preview",
+        body={"template_type": "campaign", "body": "Hello"},
+    ) == "<p>Hello</p>"
+
+
+def test_endpoint_contract_validation_happens_before_http() -> None:
+    client = make_client(lambda request: pytest.fail("HTTP request should not occur"))
+    with pytest.raises(ValueError, match="campaign_id"):
+        client.call_endpoint("api_running_campaign_stats")
+    with pytest.raises(ValueError, match="non-empty body"):
+        client.call_endpoint(
+            "api_render_campaign_preview", path_params={"campaign_id": 1}
+        )
+    with pytest.raises(ValueError, match="must be one of"):
+        client.call_endpoint(
+            "api_campaign_analytics",
+            path_params={"analytics_type": "invalid"},
+            query={"from": "2026-01-01", "to": "2026-02-01", "id": "1"},
+        )
 
 
 def test_unknown_endpoint_is_rejected_before_http() -> None:

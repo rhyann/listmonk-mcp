@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -68,13 +68,27 @@ class ListmonkClient:
                 f"{endpoint_name} is disabled; set LISTMONK_ENABLE_SENSITIVE_TOOLS=true"
             )
 
+        missing_query = [
+            name for name in endpoint.required_query if name not in (query or {})
+        ]
+        if missing_query:
+            raise ValueError(
+                f"{endpoint_name} requires query parameter(s): {', '.join(missing_query)}"
+            )
+        if endpoint.body_required and not body:
+            raise ValueError(f"{endpoint_name} requires a non-empty body")
+
         path = endpoint.path
+        path_enums = dict(endpoint.path_enums)
         for key, value in (path_params or {}).items():
             token = "{" + key + "}"
             if token not in path:
                 raise ValueError(f"unexpected path parameter: {key}")
             if not str(value) or "/" in str(value) or ".." in str(value):
                 raise ValueError(f"invalid path parameter: {key}")
+            if key in path_enums and str(value) not in path_enums[key]:
+                allowed = ", ".join(path_enums[key])
+                raise ValueError(f"{key} must be one of: {allowed}")
             path = path.replace(token, str(value))
         if "{" in path or "}" in path:
             raise ValueError("missing required path parameter")
@@ -83,7 +97,7 @@ class ListmonkClient:
         if query:
             kwargs["params"] = query
         if body is not None:
-            kwargs["json"] = body
+            kwargs["data" if endpoint.body_encoding == "form" else "json"] = body
         return self._request(endpoint.method, path, **kwargs)
 
     def upload_file(
@@ -137,12 +151,20 @@ class ListmonkClient:
         return self._request("GET", f"/api/campaigns/{campaign_id}")
 
     def list_campaigns(
-        self, query: str = "", status: str = "", limit: int = 20
+        self,
+        query: str = "",
+        status: str = "",
+        limit: int | Literal["all"] = 20,
+        page: int = 1,
     ) -> dict[str, Any]:
-        if not 1 <= limit <= 100:
-            raise ValueError("limit must be between 1 and 100")
+        if limit != "all" and (
+            isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100
+        ):
+            raise ValueError("limit must be between 1 and 100, or 'all'")
+        if page < 1:
+            raise ValueError("page must be at least 1")
         params: dict[str, Any] = {
-            "page": 1,
+            "page": page,
             "per_page": limit,
             "no_body": True,
             "order": "DESC",

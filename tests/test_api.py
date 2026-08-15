@@ -27,11 +27,21 @@ def test_list_campaigns_sends_filters_and_basic_auth() -> None:
         assert request.url.params["query"] == "weekly"
         assert request.url.params["status"] == "draft"
         assert request.url.params["per_page"] == "5"
+        assert request.url.params["page"] == "2"
         assert request.headers["authorization"].startswith("Basic ")
         return json_response({"data": {"results": []}})
 
     client = make_client(handler)
-    assert client.list_campaigns("weekly", "draft", 5)["data"]["results"] == []
+    assert client.list_campaigns("weekly", "draft", 5, 2)["data"]["results"] == []
+
+
+def test_list_campaigns_supports_documented_all_page_size() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["per_page"] == "all"
+        return json_response({"data": {"results": []}})
+
+    client = make_client(handler)
+    assert client.list_campaigns(limit="all")["data"]["results"] == []
 
 
 def test_create_draft_uses_only_expected_campaign_fields() -> None:
