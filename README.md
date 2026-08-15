@@ -122,7 +122,7 @@ Install the current release directly from GitHub:
 ```bash
 uv tool install \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.3.0"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.3.1"
 ```
 
 Verify the installation and find the executable Hermes should launch:
@@ -147,7 +147,7 @@ To reinstall or move to a newer release, replace the tag and run:
 ```bash
 uv tool install --reinstall \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.3.0"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.3.1"
 ```
 
 To uninstall:
@@ -299,7 +299,8 @@ HTTP behavior use a bodyless GET.
 ## Pinned Docker integration test
 
 The safe live smoke test runs against `listmonk/listmonk:v6.2.0` and `postgres:17-alpine`. It
-checks health, public configuration, language packs, and public lists without performing writes.
+checks Listmonk's public health endpoint and public lists without performing writes or requiring
+an API token.
 
 ```bash
 docker compose -f tests/integration/docker-compose.yml up -d

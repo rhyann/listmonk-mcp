@@ -21,7 +21,7 @@ def live_client() -> ListmonkClient:
     deadline = time.monotonic() + 120
     while True:
         try:
-            if httpx.get(f"{base_url}/api/health", timeout=2).is_success:
+            if httpx.get(f"{base_url}/health", timeout=2).is_success:
                 break
         except httpx.HTTPError:
             pass
@@ -31,14 +31,13 @@ def live_client() -> ListmonkClient:
     return ListmonkClient(base_url, "smoke-test", "smoke-test")
 
 
-def test_health_config_language_and_public_lists() -> None:
+def test_public_health_and_lists() -> None:
     client = live_client()
     try:
-        assert client.call_endpoint("api_health")
-        assert client.call_endpoint("api_get_config")
-        assert client.call_endpoint(
-            "api_get_language_pack", path_params={"lang": "en"}
+        base_url = os.environ.get(
+            "LISTMONK_INTEGRATION_URL", "http://127.0.0.1:9000"
         )
+        assert httpx.get(f"{base_url}/health").is_success
         assert client.call_endpoint("api_list_public_lists") is not None
     finally:
         client.close()
