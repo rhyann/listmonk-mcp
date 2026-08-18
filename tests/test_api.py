@@ -78,9 +78,35 @@ def test_update_refuses_non_draft_campaign() -> None:
 
 
 def test_send_test_rejects_an_empty_recipient_list() -> None:
-    client = make_client(lambda request: pytest.fail("HTTP request should not be made"))
+    client = ListmonkClient(
+        "https://listmonk.example.com",
+        "api-user",
+        "secret-token",
+        transport=httpx.MockTransport(lambda request: pytest.fail("HTTP request should not be made")),
+        allow_sensitive=True,
+    )
     with pytest.raises(ValueError, match="at least one"):
-        client.send_test(1, ["", "  "])
+        client.send_test(1, ["", "  "], confirm=True)
+
+
+def test_send_test_requires_confirmation_and_server_opt_in() -> None:
+    client = make_client(lambda request: pytest.fail("HTTP request should not be made"))
+    with pytest.raises(ValueError, match="confirm=true"):
+        client.send_test(1, ["a@example.com"])
+    with pytest.raises(PermissionError, match="LISTMONK_ENABLE_SENSITIVE_TOOLS"):
+        client.send_test(1, ["a@example.com"], confirm=True)
+
+
+def test_send_test_rejects_an_invalid_recipient() -> None:
+    client = ListmonkClient(
+        "https://listmonk.example.com",
+        "api-user",
+        "secret-token",
+        transport=httpx.MockTransport(lambda request: pytest.fail("HTTP request should not be made")),
+        allow_sensitive=True,
+    )
+    with pytest.raises(ValueError, match="invalid test email address"):
+        client.send_test(1, ["not-an-email"], confirm=True)
 
 
 def test_schedule_checks_draft_then_updates_time_then_status() -> None:

@@ -90,7 +90,7 @@ def test_mcp_invocation_validates_and_unwraps_typed_contracts(monkeypatch) -> No
                     "query": {
                         "from": "2026-01-01",
                         "to": "2026-02-01",
-                        "id": "1",
+                        "id": [1],
                     },
                 },
             )
@@ -101,7 +101,7 @@ def test_mcp_invocation_validates_and_unwraps_typed_contracts(monkeypatch) -> No
         "method": "call_endpoint",
         "endpoint_name": "api_campaign_analytics",
         "path_params": {"analytics_type": "views"},
-        "query": {"from": "2026-01-01", "to": "2026-02-01", "id": "1"},
+        "query": {"from": "2026-01-01", "to": "2026-02-01", "id": [1]},
         "body": None,
         "confirm": False,
     }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, model_validator, create_model
 
 from .endpoints import Endpoint
 
@@ -38,6 +38,7 @@ class ListQuery(ContractModel):
     page: int | None = None
     per_page: int | Literal["all"] | None = None
     query: str | None = None
+    status: Literal["active", "archived"] | None = None
     order_by: Literal["name", "status", "created_at", "updated_at"] | None = None
     order: Literal["ASC", "DESC"] | None = None
     minimal: bool | None = None
@@ -58,35 +59,119 @@ class CampaignQuery(ContractModel):
 class CampaignAnalyticsQuery(ContractModel):
     from_: str = Field(alias="from")
     to: str
-    id: str
+    id: list[int]
 
 
 class TemplateQuery(ContractModel):
-    no_body: bool
+    no_body: bool | None = None
 
 
-class SubscriberPayload(ContractModel):
-    email: str | None = None
-    name: str | None = None
-    status: str | None = None
+class CreateSubscriberPayload(ContractModel):
+    email: str
+    name: str
+    status: Literal["enabled", "blocklisted"]
     lists: list[int] | None = None
     list_uuids: list[str] | None = None
     preconfirm_subscriptions: bool | None = None
     attribs: dict[str, Any] | None = None
 
 
-class SubscriberMutation(ContractModel):
+class UpdateSubscriberPayload(ContractModel):
+    email: str
+    name: str
+    status: Literal["enabled", "disabled", "blocklisted"]
+    lists: list[int]
+    list_uuids: list[str] | None = None
+    preconfirm_subscriptions: bool | None = None
+    attribs: dict[str, Any] | None = None
+
+
+class PatchSubscriberPayload(ContractModel):
+    email: str | None = None
+    name: str | None = None
+    status: Literal["enabled", "disabled", "blocklisted"] | None = None
+    lists: list[int] | None = None
+    list_uuids: list[str] | None = None
+    preconfirm_subscriptions: bool | None = None
+    attribs: dict[str, Any] | None = None
+
+
+class SubscriberListMutation(ContractModel):
+    ids: list[int]
+    action: Literal["add", "remove", "unsubscribe"]
+    target_list_ids: list[int]
+    status: Literal["confirmed", "unconfirmed", "unsubscribed"] | None = None
+
+    @model_validator(mode="after")
+    def require_add_status(self) -> "SubscriberListMutation":
+        if self.action == "add" and self.status is None:
+            raise ValueError("status is required when action is 'add'")
+        return self
+
+
+class SubscriberListByQueryMutation(ContractModel):
     query: str | None = None
-    ids: list[int] | None = None
-    action: str | None = None
-    target_list_ids: list[int] | None = None
-    status: str | None = None
+    search: str | None = None
+    list_ids: list[int] | None = None
+    subscription_status: str | None = None
+    action: Literal["add", "remove", "unsubscribe"]
+    target_list_ids: list[int]
+    status: Literal["confirmed", "unconfirmed", "unsubscribed"] | None = None
+
+    @model_validator(mode="after")
+    def require_add_status(self) -> "SubscriberListByQueryMutation":
+        if self.action == "add" and self.status is None:
+            raise ValueError("status is required when action is 'add'")
+        return self
 
 
-class ListPayload(ContractModel):
+class SubscriberListForOneMutation(ContractModel):
+    ids: list[int]
+    action: Literal["add", "remove", "unsubscribe"]
+    status: Literal["confirmed", "unconfirmed", "unsubscribed"] | None = None
+
+    @model_validator(mode="after")
+    def require_add_status(self) -> "SubscriberListForOneMutation":
+        if self.action == "add" and self.status is None:
+            raise ValueError("status is required when action is 'add'")
+        return self
+
+
+class SubscriberIdsPayload(ContractModel):
+    ids: list[int]
+
+
+class SubscriberQueryPayload(ContractModel):
+    query: str
+    list_ids: list[int] | None = None
+
+
+class SubscriberQueryDeletePayload(ContractModel):
+    query: str | None = None
+    list_ids: list[int] | None = None
+    all: bool | None = None
+
+    @model_validator(mode="after")
+    def require_selection(self) -> "SubscriberQueryDeletePayload":
+        if not self.query and not self.list_ids and self.all is not True:
+            raise ValueError("query, list_ids, or all=true is required")
+        return self
+
+
+class CreateListPayload(ContractModel):
+    name: str
+    type: Literal["private", "public"]
+    optin: Literal["single", "double"]
+    status: Literal["active", "archived"] | None = None
+    tags: list[str] | None = None
+    description: str | None = None
+
+
+class UpdateListPayload(ContractModel):
     name: str | None = None
     type: Literal["private", "public"] | None = None
     optin: Literal["single", "double"] | None = None
+    status: Literal["active", "archived"] | None = None
     tags: list[str] | None = None
     description: str | None = None
 
@@ -133,13 +218,14 @@ class CampaignPreviewPayload(ContractModel):
 
 
 class CampaignStatusPayload(ContractModel):
-    status: str | None = None
+    status: Literal["draft", "scheduled", "running", "paused", "cancelled"]
 
 
 class CampaignArchivePayload(ContractModel):
-    archive: bool | None = None
+    archive: bool
     archive_template_id: int | None = None
     archive_meta: dict[str, Any] | None = None
+    archive_slug: str | None = None
 
 
 class TemplatePayload(ContractModel):
@@ -170,18 +256,57 @@ class MaintenanceDatePayload(ContractModel):
 class TransactionalPayload(ContractModel):
     subscriber_email: str | None = None
     subscriber_id: int | None = None
-    template_id: int | None = None
+    subscriber_emails: list[str] | None = None
+    subscriber_ids: list[int] | None = None
+    subscriber_mode: Literal["default", "fallback", "external"] | None = None
+    template_id: int
     from_email: str | None = None
+    subject: str | None = None
     data: dict[str, Any] | None = None
     headers: list[dict[str, Any]] | None = None
     messenger: str | None = None
     content_type: str | None = None
+    altbody: str | None = None
+
+    @model_validator(mode="after")
+    def require_recipient(self) -> "TransactionalPayload":
+        if not any(
+            (self.subscriber_email, self.subscriber_id, self.subscriber_emails, self.subscriber_ids)
+        ):
+            raise ValueError("at least one subscriber recipient is required")
+        return self
+
+
+class IdsOrQueryDelete(ContractModel):
+    id: list[int] | None = None
+    query: str | None = None
+
+    @model_validator(mode="after")
+    def require_selection(self) -> "IdsOrQueryDelete":
+        if not self.id and not self.query:
+            raise ValueError("id or query is required")
+        return self
+
+
+class BounceDeleteQuery(ContractModel):
+    id: list[int] | None = None
+    all: bool | None = None
+
+    @model_validator(mode="after")
+    def require_selection(self) -> "BounceDeleteQuery":
+        if not self.id and self.all is not True:
+            raise ValueError("id or all=true is required")
+        return self
+
+
+class SubscriberDeleteQuery(ContractModel):
+    id: list[int]
 
 
 class PublicSubscriptionPayload(ContractModel):
     name: str | None = None
-    email: str | None = None
-    list_uuids: list[str] | None = None
+    email: str
+    list_uuids: list[str]
 
 
 QUERY_MODELS: dict[str, type[ContractModel]] = {
@@ -194,24 +319,29 @@ QUERY_MODELS: dict[str, type[ContractModel]] = {
     ),
     "api_campaign_analytics": CampaignAnalyticsQuery,
     "api_list_templates": TemplateQuery,
-    "api_delete_subscribers": create_model(
-        "DeleteSubscribersQuery", id=(str, ...), __base__=ContractModel
+    "api_get_campaign": create_model(
+        "GetCampaignQuery", no_body=(bool | None, None), __base__=ContractModel
     ),
+    "api_get_template": TemplateQuery,
+    "api_delete_subscribers": SubscriberDeleteQuery,
+    "api_delete_lists": IdsOrQueryDelete,
+    "api_delete_campaigns": IdsOrQueryDelete,
+    "api_delete_bounces": BounceDeleteQuery,
 }
 
 
 BODY_MODELS: dict[str, type[ContractModel]] = {
-    "api_create_subscriber": SubscriberPayload,
-    "api_update_subscriber": SubscriberPayload,
-    "api_patch_subscriber": SubscriberPayload,
-    "api_update_subscriber_lists": SubscriberMutation,
-    "api_update_subscribers_for_list": SubscriberMutation,
-    "api_query_update_subscriber_lists": SubscriberMutation,
-    "api_set_subscribers_blocklist": SubscriberMutation,
-    "api_query_set_subscribers_blocklist": SubscriberMutation,
-    "api_set_subscriber_blocklist": SubscriberMutation,
-    "api_create_list": ListPayload,
-    "api_update_list": ListPayload,
+    "api_create_subscriber": CreateSubscriberPayload,
+    "api_update_subscriber": UpdateSubscriberPayload,
+    "api_patch_subscriber": PatchSubscriberPayload,
+    "api_update_subscriber_lists": SubscriberListMutation,
+    "api_update_subscribers_for_list": SubscriberListForOneMutation,
+    "api_query_update_subscriber_lists": SubscriberListByQueryMutation,
+    "api_set_subscribers_blocklist": SubscriberIdsPayload,
+    "api_query_set_subscribers_blocklist": SubscriberQueryPayload,
+    "api_query_delete_subscribers": SubscriberQueryDeletePayload,
+    "api_create_list": CreateListPayload,
+    "api_update_list": UpdateListPayload,
     "api_create_campaign": CreateCampaignPayload,
     "api_update_campaign": CampaignPayload,
     "api_render_campaign_preview": CampaignPreviewPayload,

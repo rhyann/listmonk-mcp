@@ -89,6 +89,13 @@ def test_endpoint_contract_validation_happens_before_http() -> None:
             path_params={"analytics_type": "invalid"},
             query={"from": "2026-01-01", "to": "2026-02-01", "id": "1"},
         )
+    sensitive_client = make_client(
+        lambda request: pytest.fail("HTTP request should not occur"), allow_sensitive=True
+    )
+    with pytest.raises(ValueError, match="requires query parameters"):
+        sensitive_client.call_endpoint(
+            "api_delete_lists", confirm=True
+        )
 
 
 def test_unknown_endpoint_is_rejected_before_http() -> None:

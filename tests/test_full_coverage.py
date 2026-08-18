@@ -104,6 +104,9 @@ def test_update_preview_send_and_raw_draft_response() -> None:
         "body": "Old",
         "lists": [1],
         "content_type": "html",
+        "altbody": "Old text",
+        "headers": [{"name": "X-Test", "value": "yes"}],
+        "media": [2],
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -114,13 +117,22 @@ def test_update_preview_send_and_raw_draft_response() -> None:
             return response(text="preview")
         return response()
 
-    client = make_client(handler)
+    client = make_client(handler, allow_sensitive=True)
     assert client.update_draft(3, "New", "Subject", "Body", [1], "n@example.com", 1)[
         "data"
     ]
     assert client.preview(3) == "preview"
-    assert client.send_test(3, [" a@example.com ", ""])["data"]
-    assert [item.method for item in requests] == ["GET", "PUT", "GET", "POST"]
+    assert client.send_test(
+        3, ["Rhyann <A@example.com>", "a@example.com", ""], confirm=True
+    )["data"]
+    test_payload = json.loads(requests[-1].content)
+    assert test_payload["name"] == "Old"
+    assert test_payload["lists"] == [1]
+    assert test_payload["subscribers"] == ["a@example.com"]
+    assert test_payload["altbody"] == "Old text"
+    assert test_payload["headers"] == [{"name": "X-Test", "value": "yes"}]
+    assert test_payload["media"] == [2]
+    assert [item.method for item in requests] == ["GET", "PUT", "GET", "GET", "POST"]
 
 
 def test_schedule_rejects_invalid_timestamp() -> None:
@@ -246,7 +258,8 @@ def test_high_level_server_wrappers_delegate(monkeypatch: pytest.MonkeyPatch) ->
     assert server.create_newsletter_draft("n", "s", "b", [1], "f", 1)["method"] == "create_draft"
     assert server.update_newsletter_draft(1, "n", "s", "b", [1], "f", 1)["method"] == "update_draft"
     assert server.preview_newsletter(1) == {"method": "preview"}
-    assert server.send_newsletter_test(1, ["a@example.com"])["method"] == "send_test"
+    assert server.send_newsletter_test(1, ["a@example.com"], True)["method"] == "send_test"
+    assert calls[-1][2] == {"confirm": True}
     assert server.schedule_newsletter(1, "2026-01-01T00:00:00Z")["method"] == "schedule"
     assert len(calls) == 7
 
@@ -274,12 +287,12 @@ def test_generated_endpoint_tools_delegate_and_document_confirmation(
 
 def test_typed_contract_uses_openapi_aliases() -> None:
     query = CampaignAnalyticsQuery.model_validate(
-        {"from": "2026-01-01", "to": "2026-02-01", "id": "1"}
+        {"from": "2026-01-01", "to": "2026-02-01", "id": [1]}
     )
     assert dump_contract(query) == {
         "from": "2026-01-01",
         "to": "2026-02-01",
-        "id": "1",
+        "id": [1],
     }
 
 
@@ -417,6 +430,13 @@ def test_bounce_campaign_filter_must_be_positive() -> None:
         server.api_list_bounces(campaign_id=0)
 
 
+def test_bounce_specific_pagination_validation() -> None:
+    with pytest.raises(ValueError, match="page must be at least 1"):
+        server.api_list_bounces(page=0)
+    with pytest.raises(ValueError, match="order must be asc or desc"):
+        server.api_list_bounces(order="sideways")
+
+
 def test_upload_and_import_server_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
     monkeypatch.setattr(
@@ -440,8 +460,11 @@ def test_upload_and_import_server_tools(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(ValueError, match="mode"):
         server.import_subscribers("people.csv", encoded, [1], "invalid")
-    with pytest.raises(ValueError, match="positive list ID"):
+    with pytest.raises(ValueError, match="at least one list ID"):
         server.import_subscribers("people.csv", encoded, [])
+    with pytest.raises(ValueError, match="list IDs must be positive"):
+        server.import_subscribers("people.csv", encoded, [0])
+    assert server.import_subscribers("blocked.csv", encoded, mode="blocklist")["data"]
     with pytest.raises(ValueError, match="subscription_status"):
         server.import_subscribers(
             "people.csv", encoded, [1], subscription_status="invalid"
@@ -458,13 +481,15 @@ def test_attachment_server_tool_and_missing_fields(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(server, "_call", fake_call)
     encoded = base64.b64encode(b"document").decode()
     assert server.send_transactional_with_attachments(
-        {"template_id": 2},
+        {"template_id": 2, "subscriber_email": "reader@example.com"},
         [{"filename": "invoice.pdf", "content_base64": encoded}],
         confirm=True,
     )["data"]
     assert captured["args"][1] == [("invoice.pdf", b"document")]
     with pytest.raises(ValueError, match="filename and content_base64"):
-        server.send_transactional_with_attachments({}, [{"filename": "missing"}])
+        server.send_transactional_with_attachments(
+            {"template_id": 2, "subscriber_id": 1}, [{"filename": "missing"}]
+        )
 
 
 def test_main_runs_stdio_and_module_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:

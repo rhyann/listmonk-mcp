@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from email.utils import parseaddr
 import json
 from typing import Any, Literal
 
@@ -95,6 +96,8 @@ class ListmonkClient:
             raise ValueError(
                 f"{endpoint_name} requires query parameter(s): {', '.join(missing_query)}"
             )
+        if endpoint.query_required and not query:
+            raise ValueError(f"{endpoint_name} requires query parameters")
         if endpoint.body_required and not body:
             raise ValueError(f"{endpoint_name} requires a non-empty body")
 
@@ -261,14 +264,58 @@ class ListmonkClient:
     def preview(self, campaign_id: int) -> str:
         return self._request("GET", f"/api/campaigns/{campaign_id}/preview")
 
-    def send_test(self, campaign_id: int, email_addresses: list[str]) -> dict[str, Any]:
-        addresses = [address.strip() for address in email_addresses if address.strip()]
+    def send_test(
+        self,
+        campaign_id: int,
+        email_addresses: list[str],
+        *,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        if not confirm:
+            raise ValueError("send_newsletter_test requires confirm=true")
+        if not self._allow_sensitive:
+            raise PermissionError(
+                "test delivery is disabled; set LISTMONK_ENABLE_SENSITIVE_TOOLS=true"
+            )
+
+        addresses: list[str] = []
+        for value in email_addresses:
+            value = value.strip()
+            if not value:
+                continue
+            _, address = parseaddr(value)
+            if not address or "@" not in address:
+                raise ValueError(f"invalid test email address: {value!r}")
+            normalized = address.lower()
+            if normalized not in addresses:
+                addresses.append(normalized)
         if not addresses:
             raise ValueError("at least one test email address is required")
+
+        response = self.get_campaign(campaign_id)
+        campaign = response.get("data", response)
+        payload = {
+            "name": campaign["name"],
+            "subject": campaign["subject"],
+            "body": campaign["body"],
+            "lists": [
+                item["id"] if isinstance(item, dict) else item
+                for item in campaign["lists"]
+            ],
+            "from_email": campaign.get("from_email", ""),
+            "template_id": campaign.get("template_id", 0),
+            "content_type": campaign["content_type"],
+            "messenger": campaign.get("messenger", "email"),
+            "type": campaign.get("type", "regular"),
+            "subscribers": addresses,
+        }
+        for optional_field in ("altbody", "headers", "media"):
+            if optional_field in campaign:
+                payload[optional_field] = campaign[optional_field]
         return self._request(
             "POST",
             f"/api/campaigns/{campaign_id}/test",
-            json={"subscribers": addresses},
+            json=payload,
         )
 
     def schedule(self, campaign_id: int, send_at: str) -> dict[str, Any]:

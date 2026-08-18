@@ -75,7 +75,7 @@ The higher-level `list_campaigns` tool also accepts a top-level `page` argument.
 | `create_newsletter_draft` | Creates a draft only |
 | `update_newsletter_draft` | Updates only campaigns that remain drafts |
 | `preview_newsletter` | Returns Listmonk's rendered preview |
-| `send_newsletter_test` | Sends only to explicitly supplied test addresses |
+| `send_newsletter_test` | Sends only to explicitly supplied existing subscribers; requires `confirm=true` and the sensitive-tools setting |
 | `schedule_newsletter` | Schedules a draft at an explicit ISO-8601 time |
 
 The higher-level scheduling tool verifies that the campaign is a draft before updating its
@@ -89,7 +89,14 @@ Three binary-safe tools accept base64 data rather than arbitrary host paths:
 
 `import_subscribers` supports Listmonk's documented `subscription_status` import option. Its
 accepted values are `confirmed`, `unconfirmed`, and `unsubscribed`; the default is
-`confirmed`.
+`confirmed`. Subscribe-mode imports require at least one target list. Blocklist-mode imports
+do not, matching Listmonk's import behavior.
+
+The endpoint contracts distinguish subscriber creation, full replacement (`PUT`), and partial
+updates (`PATCH`). They also enforce Listmonk's conditional mutation rules—for example,
+`status` is required when adding subscribers to lists. Transactional sends require a
+`template_id` and at least one recipient selector, and include Listmonk's single-recipient,
+multi-recipient, subscriber-mode, subject, and alternate-body fields.
 
 ## Sensitive-operation policy
 
@@ -103,6 +110,12 @@ This applies to deletes, campaign status transitions, test and transactional sen
 mutations, SMTP tests, settings updates, and administrative reloads. Use a Listmonk API role
 with only the permissions this MCP instance actually needs; Listmonk remains the final
 authorization boundary.
+
+For `send_newsletter_test`, pass raw subscriber email addresses or standard display-name
+addresses such as `Rhyann Stewart <rhyann@example.com>`; the helper normalizes them to raw
+email addresses. Each address must already belong to a subscriber visible to the Listmonk API
+user. The helper loads the saved campaign and sends Listmonk the complete campaign payload,
+as required by Listmonk's test endpoint.
 
 ## Requirements
 
@@ -122,7 +135,7 @@ Install the current release directly from GitHub:
 ```bash
 uv tool install \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.4.0"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.0"
 ```
 
 Verify the installation and find the executable Hermes should launch:
@@ -147,7 +160,7 @@ To reinstall or move to a newer release, replace the tag and run:
 ```bash
 uv tool install --reinstall \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.4.0"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.0"
 ```
 
 To uninstall:
