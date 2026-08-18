@@ -122,7 +122,7 @@ Install the current release directly from GitHub:
 ```bash
 uv tool install \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.3.1"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.4.0"
 ```
 
 Verify the installation and find the executable Hermes should launch:
@@ -147,7 +147,7 @@ To reinstall or move to a newer release, replace the tag and run:
 ```bash
 uv tool install --reinstall \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.3.1"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.4.0"
 ```
 
 To uninstall:
@@ -179,7 +179,53 @@ export LISTMONK_URL="https://listmonk.example.com"
 export LISTMONK_USER="hermes_newsletter"
 export LISTMONK_TOKEN="replace-me"
 export LISTMONK_ENABLE_SENSITIVE_TOOLS="false"
+export LISTMONK_TOOL_GROUPS="all"
 ```
+
+### Limit exposed tool groups
+
+`LISTMONK_TOOL_GROUPS` controls which tools the MCP server advertises. It accepts a
+comma-separated list of capability groups:
+
+- `system`
+- `subscribers`
+- `lists`
+- `imports`
+- `campaigns`
+- `templates`
+- `media`
+- `bounces`
+- `transactional`
+- `maintenance`
+
+The default, `all`, preserves the complete tool surface. To expose only campaign tools:
+
+```bash
+export LISTMONK_TOOL_GROUPS="campaigns"
+```
+
+Groups can be combined:
+
+```bash
+export LISTMONK_TOOL_GROUPS="campaigns,subscribers,lists"
+```
+
+Use `read-only` by itself to expose read-only tools across every group:
+
+```bash
+export LISTMONK_TOOL_GROUPS="read-only"
+```
+
+Combine it with capability groups to apply it as a restriction. This example exposes only
+read-only campaign and subscriber tools:
+
+```bash
+export LISTMONK_TOOL_GROUPS="campaigns,subscribers,read-only"
+```
+
+Tool groups reduce agent context and prevent hidden tools from being invoked through MCP. They
+do not replace Listmonk API-user permissions, which remain the authorization boundary. Restart
+the MCP process (and reload the MCP client if it caches tool schemas) after changing this value.
 
 Test the credentials independently before configuring MCP:
 
@@ -216,6 +262,7 @@ mcp_servers:
       LISTMONK_USER: "${LISTMONK_USER}"
       LISTMONK_TOKEN: "${LISTMONK_TOKEN}"
       LISTMONK_ENABLE_SENSITIVE_TOOLS: "false"
+      LISTMONK_TOOL_GROUPS: "campaigns"
     tools:
       include:
         - get_campaign

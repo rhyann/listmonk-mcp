@@ -42,7 +42,27 @@ class ListmonkClient:
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         response = self._client.request(method, path, **kwargs)
-        response.raise_for_status()
+        if response.is_error:
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    detail = payload.get("message") or payload.get("error") or payload
+                else:
+                    detail = payload
+            except ValueError:
+                detail = response.text.strip() or response.reason_phrase
+            rendered_detail = (
+                detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
+            )
+            # Keep remote error bodies useful to MCP callers without allowing an
+            # unexpectedly large response to flood the tool result or logs.
+            rendered_detail = rendered_detail[:2000]
+            raise httpx.HTTPStatusError(
+                f"Listmonk API returned {response.status_code} "
+                f"{response.reason_phrase}: {rendered_detail}",
+                request=response.request,
+                response=response,
+            )
         if "application/json" in response.headers.get("content-type", ""):
             return response.json()
         return response.text

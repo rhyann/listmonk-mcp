@@ -106,6 +106,26 @@ class CampaignPayload(ContractModel):
     template_id: int | None = None
 
 
+class CreateCampaignPayload(ContractModel):
+    """Fields Listmonk requires when creating a campaign."""
+
+    name: str
+    subject: str
+    lists: list[int]
+    type: Literal["regular", "optin"]
+    content_type: Literal["richtext", "html", "markdown", "plain", "visual"]
+    body: str
+    from_email: str | None = None
+    body_source: str | None = None
+    altbody: str | None = None
+    send_at: str | None = None
+    messenger: str | None = None
+    template_id: int | None = None
+    tags: list[str] | None = None
+    headers: list[dict[str, str]] | None = None
+    attribs: dict[str, Any] | None = None
+
+
 class CampaignPreviewPayload(ContractModel):
     template_id: int | None = None
     content_type: str | None = None
@@ -192,7 +212,7 @@ BODY_MODELS: dict[str, type[ContractModel]] = {
     "api_set_subscriber_blocklist": SubscriberMutation,
     "api_create_list": ListPayload,
     "api_update_list": ListPayload,
-    "api_create_campaign": CampaignPayload,
+    "api_create_campaign": CreateCampaignPayload,
     "api_update_campaign": CampaignPayload,
     "api_render_campaign_preview": CampaignPreviewPayload,
     "api_render_campaign_text": CampaignPreviewPayload,

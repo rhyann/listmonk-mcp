@@ -101,7 +101,9 @@ ENDPOINTS: dict[str, Endpoint] = {
         required_query=("from", "to", "id"),
         path_enums=(("analytics_type", ("links", "views", "clicks", "bounces")),),
     ),
-    "api_create_campaign": _e("POST", "/api/campaigns", "Create a campaign."),
+    "api_create_campaign": _e(
+        "POST", "/api/campaigns", "Create a campaign.", body_required=True
+    ),
     "api_test_campaign": _e("POST", "/api/campaigns/{campaign_id}/test", "Send a campaign test.", True, body_required=True),
     "api_render_campaign_preview": _e("POST", "/api/campaigns/{campaign_id}/preview", "Render a preview from updated campaign content.", body_encoding="form", body_required=True),
     "api_render_campaign_text": _e("POST", "/api/campaigns/{campaign_id}/text", "Render campaign content as text.", body_encoding="form", body_required=True),

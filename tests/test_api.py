@@ -123,5 +123,28 @@ def test_schedule_checks_draft_then_updates_time_then_status() -> None:
 
 def test_http_errors_are_not_hidden() -> None:
     client = make_client(lambda request: json_response({"message": "forbidden"}, 403))
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(
+        httpx.HTTPStatusError,
+        match="Listmonk API returned 403 Forbidden: forbidden",
+    ):
+        client.get_campaign(1)
+
+
+def test_non_json_http_error_detail_is_preserved_and_bounded() -> None:
+    client = make_client(
+        lambda request: httpx.Response(
+            400,
+            text="invalid campaign " + ("x" * 3000),
+            request=request,
+        )
+    )
+    with pytest.raises(httpx.HTTPStatusError) as caught:
+        client.get_campaign(1)
+    assert "invalid campaign" in str(caught.value)
+    assert len(str(caught.value)) < 2100
+
+
+def test_non_object_json_http_error_detail_is_preserved() -> None:
+    client = make_client(lambda request: json_response(["invalid campaign"], 400))
+    with pytest.raises(httpx.HTTPStatusError, match=r'\["invalid campaign"\]'):
         client.get_campaign(1)

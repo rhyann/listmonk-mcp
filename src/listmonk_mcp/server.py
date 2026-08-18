@@ -379,6 +379,94 @@ def send_transactional_with_attachments(
     )
 
 
+_HIGH_LEVEL_GROUPS: dict[str, set[str]] = {
+    "campaigns": {
+        "get_campaign",
+        "list_campaigns",
+        "create_newsletter_draft",
+        "update_newsletter_draft",
+        "preview_newsletter",
+        "send_newsletter_test",
+        "schedule_newsletter",
+    },
+    "media": {"upload_media"},
+    "imports": {"import_subscribers"},
+    "transactional": {"send_transactional_with_attachments"},
+}
+
+
+def _endpoint_group(endpoint_name: str) -> str:
+    if endpoint_name.startswith("api_"):
+        for group, markers in {
+            "subscribers": ("subscriber", "subscribe", "subscription"),
+            "campaigns": ("campaign",),
+            "templates": ("template",),
+            "media": ("media",),
+            "bounces": ("bounce",),
+            "imports": ("import",),
+            "lists": ("list",),
+            "transactional": ("transactional",),
+            "maintenance": ("maintenance",),
+        }.items():
+            if any(marker in endpoint_name for marker in markers):
+                return group
+    return "system"
+
+
+def _tool_groups() -> dict[str, set[str]]:
+    groups = {name: set(tools) for name, tools in _HIGH_LEVEL_GROUPS.items()}
+    for endpoint_name in ENDPOINTS:
+        groups.setdefault(_endpoint_group(endpoint_name), set()).add(endpoint_name)
+    return groups
+
+
+def _read_only_tools() -> set[str]:
+    tools = {
+        name for name, endpoint in ENDPOINTS.items() if endpoint.method == "GET"
+    }
+    tools.update({"get_campaign", "list_campaigns", "preview_newsletter"})
+    return tools
+
+
+def _selected_tool_names(configuration: str | None) -> set[str]:
+    groups = _tool_groups()
+    all_tools = set().union(*groups.values())
+    if not configuration or configuration.strip().lower() == "all":
+        return all_tools
+
+    requested = {
+        item.strip().lower() for item in configuration.split(",") if item.strip()
+    }
+    valid = set(groups) | {"all", "read-only"}
+    unknown = requested - valid
+    if unknown:
+        raise ValueError(
+            "unknown LISTMONK_TOOL_GROUPS value(s): "
+            f"{', '.join(sorted(unknown))}; expected any of "
+            f"{', '.join(sorted(valid))}"
+        )
+
+    read_only = "read-only" in requested
+    requested -= {"read-only"}
+    if "all" in requested:
+        selected = all_tools
+    elif requested:
+        selected = set().union(*(groups[name] for name in requested))
+    else:
+        selected = all_tools
+    return selected & _read_only_tools() if read_only else selected
+
+
+def _configure_tool_exposure(server: MCPServer, configuration: str | None) -> None:
+    selected = _selected_tool_names(configuration)
+    all_tools = set().union(*_tool_groups().values())
+    for tool_name in all_tools - selected:
+        server.remove_tool(tool_name)
+
+
+_configure_tool_exposure(mcp, os.environ.get("LISTMONK_TOOL_GROUPS"))
+
+
 def main() -> None:
     mcp.run(transport="stdio")
 

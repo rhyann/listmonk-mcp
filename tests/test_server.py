@@ -63,6 +63,14 @@ def test_server_exposes_only_the_intended_tools() -> None:
         "body",
     }
 
+    create_campaign_tool = next(
+        tool for tool in tools if tool.name == "api_create_campaign"
+    )
+    assert create_campaign_tool.input_schema["required"] == ["body"]
+    assert set(
+        create_campaign_tool.input_schema["$defs"]["CreateCampaignPayload"]["required"]
+    ) == {"name", "subject", "lists", "type", "content_type", "body"}
+
 
 def test_mcp_invocation_validates_and_unwraps_typed_contracts(monkeypatch) -> None:
     captured = {}

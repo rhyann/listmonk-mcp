@@ -163,6 +163,51 @@ def test_server_client_reads_environment(monkeypatch: pytest.MonkeyPatch) -> Non
     }
 
 
+def test_tool_group_selection_defaults_to_everything() -> None:
+    expected = set(ENDPOINTS) | set().union(*server._HIGH_LEVEL_GROUPS.values())
+    assert server._selected_tool_names(None) == expected
+    assert server._selected_tool_names(" all ") == expected
+
+
+def test_tool_groups_can_be_combined_and_restricted_to_read_only() -> None:
+    campaigns = server._selected_tool_names("campaigns")
+    assert "create_newsletter_draft" in campaigns
+    assert "api_create_campaign" in campaigns
+    assert "api_list_subscribers" not in campaigns
+
+    combined = server._selected_tool_names("campaigns, subscribers")
+    assert campaigns < combined
+    assert "api_list_subscribers" in combined
+
+    read_only = server._selected_tool_names("campaigns,subscribers,read-only")
+    assert "get_campaign" in read_only
+    assert "api_list_subscribers" in read_only
+    assert "create_newsletter_draft" not in read_only
+    assert "api_create_subscriber" not in read_only
+    assert server._selected_tool_names("read-only") > read_only
+    assert server._selected_tool_names("all,read-only") == server._selected_tool_names(
+        "read-only"
+    )
+
+
+def test_tool_group_selection_rejects_unknown_values() -> None:
+    with pytest.raises(ValueError, match="unknown LISTMONK_TOOL_GROUPS.*unknown"):
+        server._selected_tool_names("campaigns,unknown")
+
+
+def test_tool_exposure_removes_unselected_tools() -> None:
+    class FakeServer:
+        removed: set[str] = set()
+
+        def remove_tool(self, name: str) -> None:
+            self.removed.add(name)
+
+    fake = FakeServer()
+    server._configure_tool_exposure(fake, "campaigns")
+    assert "api_list_subscribers" in fake.removed
+    assert "api_create_campaign" not in fake.removed
+
+
 def test_server_call_always_closes(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeClient:
         closed = False

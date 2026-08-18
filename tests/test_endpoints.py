@@ -81,6 +81,8 @@ def test_endpoint_contract_validation_happens_before_http() -> None:
         client.call_endpoint(
             "api_render_campaign_preview", path_params={"campaign_id": 1}
         )
+    with pytest.raises(ValueError, match="non-empty body"):
+        client.call_endpoint("api_create_campaign")
     with pytest.raises(ValueError, match="must be one of"):
         client.call_endpoint(
             "api_campaign_analytics",
