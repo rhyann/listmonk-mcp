@@ -135,7 +135,7 @@ Install the current release directly from GitHub:
 ```bash
 uv tool install \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.0"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.1"
 ```
 
 Verify the installation and find the executable Hermes should launch:
@@ -160,7 +160,7 @@ To reinstall or move to a newer release, replace the tag and run:
 ```bash
 uv tool install --reinstall \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.0"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.1"
 ```
 
 To uninstall:

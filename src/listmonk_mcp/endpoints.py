@@ -75,7 +75,14 @@ ENDPOINTS: dict[str, Endpoint] = {
     "api_query_set_subscribers_blocklist": _e("PUT", "/api/subscribers/query/blocklist", "Set blocklist state by query.", True, body_required=True),
     "api_delete_subscriber": _e("DELETE", "/api/subscribers/{subscriber_id}", "Delete a subscriber.", True),
     "api_delete_subscriber_bounces": _e("DELETE", "/api/subscribers/{subscriber_id}/bounces", "Delete one subscriber's bounces.", True),
-    "api_delete_subscribers": _e("DELETE", "/api/subscribers", "Delete selected subscribers.", True, query_required=True),
+    "api_delete_subscribers": _e(
+        "DELETE",
+        "/api/subscribers",
+        "Delete selected subscribers.",
+        True,
+        required_query=("id",),
+        query_required=True,
+    ),
     "api_query_delete_subscribers": _e("POST", "/api/subscribers/query/delete", "Delete subscribers by query.", True, body_required=True),
 
     # Lists.

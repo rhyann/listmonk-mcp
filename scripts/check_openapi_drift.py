@@ -24,6 +24,11 @@ SPECIAL_OPERATIONS = {
     ("POST", "/api/media"),
     ("POST", "/api/import/subscribers"),
 }
+# The narrative guide documents no_body as optional. Upstream OpenAPI currently
+# marks it required, so do not force that stale requirement into the MCP contract.
+OPTIONAL_QUERY_OVERRIDES = {
+    ("GET", "/api/templates"): {"no_body"},
+}
 
 
 def normalize(path: str) -> str:
@@ -100,7 +105,11 @@ def validate(spec: dict[str, Any]) -> list[str]:
             )
         if request_body.get("required") and not endpoint.body_required:
             errors.append(f"{name}: OpenAPI requires a request body")
-        missing_query = required_query(operation) - set(endpoint.required_query)
+        missing_query = (
+            required_query(operation)
+            - set(endpoint.required_query)
+            - OPTIONAL_QUERY_OVERRIDES.get(key, set())
+        )
         if missing_query:
             errors.append(
                 f"{name}: missing required query metadata: {', '.join(sorted(missing_query))}"
