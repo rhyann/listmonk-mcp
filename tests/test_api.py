@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import httpx
@@ -75,6 +76,112 @@ def test_update_refuses_non_draft_campaign() -> None:
     client = make_client(handler)
     with pytest.raises(ValueError, match="not 'draft'"):
         client.update_draft(9, "Weekly", "News", "Body", [1], "a@example.com", 1)
+
+
+def test_exact_html_replacement_preserves_campaign_and_verifies_storage() -> None:
+    html = b"<!doctype html>\n<p>Hello</p>\n"
+    digest = hashlib.sha256(html).hexdigest()
+    requests: list[httpx.Request] = []
+    campaign = {
+        "id": 9,
+        "status": "draft",
+        "name": "Weekly",
+        "subject": "News",
+        "body": "old",
+        "lists": [{"id": 3}],
+        "from_email": "news@example.com",
+        "template_id": 1,
+        "content_type": "html",
+        "messenger": "email",
+        "type": "regular",
+        "send_at": "2026-08-21T14:00:00-07:00",
+        "tags": ["weekly"],
+        "headers": [{"X-Test": "yes"}],
+        "attribs": {"edition": 9},
+        "altbody": "Hello",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "PUT":
+            payload = json.loads(request.content)
+            assert payload["body"].encode() == html
+            assert payload["lists"] == [3]
+            assert payload["send_at"] == campaign["send_at"]
+            assert payload["tags"] == ["weekly"]
+            return json_response({"data": True})
+        stored = {**campaign, "body": html.decode() if len(requests) > 2 else "old"}
+        return json_response({"data": stored})
+
+    client = make_client(handler)
+    result = client.replace_campaign_html(9, html, digest)
+    assert result["data"]["body"].encode() == html
+    assert result["integrity"] == {
+        "sha256": digest,
+        "byte_length": len(html),
+        "verified": True,
+    }
+    assert [request.method for request in requests] == ["GET", "PUT", "GET"]
+
+
+@pytest.mark.parametrize(
+    ("content", "digest", "message"),
+    [
+        (b"hello", "not-a-digest", "64-character"),
+        (b"hello", "0" * 64, "SHA-256 mismatch"),
+        (b"\xff", hashlib.sha256(b"\xff").hexdigest(), "valid UTF-8"),
+        (b"", hashlib.sha256(b"").hexdigest(), "must not be empty"),
+    ],
+)
+def test_exact_html_replacement_validates_content_before_http(
+    content: bytes, digest: str, message: str
+) -> None:
+    client = make_client(lambda request: pytest.fail("HTTP request should not be made"))
+    with pytest.raises(ValueError, match=message):
+        client.replace_campaign_html(9, content, digest)
+
+
+@pytest.mark.parametrize(
+    ("campaign", "message"),
+    [
+        ({"status": "running", "content_type": "html"}, "only draft or scheduled"),
+        ({"status": "draft", "content_type": "visual"}, "content_type='html'"),
+    ],
+)
+def test_exact_html_replacement_rejects_unsafe_campaign_types(
+    campaign: dict, message: str
+) -> None:
+    html = b"<p>Hello</p>"
+    client = make_client(lambda request: json_response({"data": campaign}))
+    with pytest.raises(ValueError, match=message):
+        client.replace_campaign_html(9, html, hashlib.sha256(html).hexdigest())
+
+
+def test_scheduled_html_replacement_requires_both_safety_gates() -> None:
+    html = b"<p>Hello</p>"
+    digest = hashlib.sha256(html).hexdigest()
+    campaign = {"status": "scheduled", "content_type": "html"}
+    disabled = make_client(lambda request: json_response({"data": campaign}))
+    with pytest.raises(ValueError, match="confirm=true"):
+        disabled.replace_campaign_html(9, html, digest)
+    with pytest.raises(PermissionError, match="LISTMONK_ENABLE_SENSITIVE_TOOLS"):
+        disabled.replace_campaign_html(9, html, digest, confirm=True)
+
+
+def test_exact_html_replacement_detects_storage_mismatch() -> None:
+    html = b"<p>Hello</p>"
+    digest = hashlib.sha256(html).hexdigest()
+    campaign = {
+        "status": "draft",
+        "content_type": "html",
+        "name": "Weekly",
+        "subject": "News",
+        "body": "changed",
+        "lists": [3],
+    }
+    client = make_client(lambda request: json_response({"data": campaign}))
+    with pytest.raises(RuntimeError, match="failed verification"):
+        client.replace_campaign_html(9, html, digest)
 
 
 def test_send_test_rejects_an_empty_recipient_list() -> None:

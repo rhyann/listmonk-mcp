@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from email.utils import parseaddr
+import hashlib
 import json
 from typing import Any, Literal
 
@@ -260,6 +261,92 @@ class ListmonkClient:
             name, subject, body, list_ids, from_email, template_id, content_type
         )
         return self._request("PUT", f"/api/campaigns/{campaign_id}", json=payload)
+
+    def replace_campaign_html(
+        self,
+        campaign_id: int,
+        content: bytes,
+        expected_sha256: str,
+        *,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Replace only a campaign's HTML body and verify the stored bytes."""
+        expected_sha256 = expected_sha256.strip().lower()
+        actual_sha256 = hashlib.sha256(content).hexdigest()
+        if len(expected_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in expected_sha256
+        ):
+            raise ValueError("expected_sha256 must be a 64-character hexadecimal digest")
+        if actual_sha256 != expected_sha256:
+            raise ValueError(
+                f"HTML SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}"
+            )
+        try:
+            body = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("campaign HTML must be valid UTF-8") from exc
+        if not body:
+            raise ValueError("campaign HTML must not be empty")
+
+        response = self.get_campaign(campaign_id)
+        campaign = response.get("data", response)
+        status = campaign.get("status")
+        if status not in {"draft", "scheduled"}:
+            raise ValueError(
+                f"campaign {campaign_id} is {status!r}; only draft or scheduled campaigns can be updated"
+            )
+        if campaign.get("content_type") != "html":
+            raise ValueError("exact HTML replacement requires campaign content_type='html'")
+        if status == "scheduled":
+            if not confirm:
+                raise ValueError("updating a scheduled campaign requires confirm=true")
+            if not self._allow_sensitive:
+                raise PermissionError(
+                    "scheduled campaign updates are disabled; set "
+                    "LISTMONK_ENABLE_SENSITIVE_TOOLS=true"
+                )
+
+        payload = {
+            "name": campaign["name"],
+            "subject": campaign["subject"],
+            "body": body,
+            "lists": [
+                item["id"] if isinstance(item, dict) else item
+                for item in campaign["lists"]
+            ],
+            "from_email": campaign.get("from_email", ""),
+            "template_id": campaign.get("template_id", 0),
+            "content_type": "html",
+            "messenger": campaign.get("messenger", "email"),
+            "type": campaign.get("type", "regular"),
+        }
+        for optional_field in (
+            "altbody",
+            "headers",
+            "attribs",
+            "tags",
+            "send_at",
+        ):
+            if optional_field in campaign:
+                payload[optional_field] = campaign[optional_field]
+        self._request("PUT", f"/api/campaigns/{campaign_id}", json=payload)
+
+        verified_response = self.get_campaign(campaign_id)
+        verified_campaign = verified_response.get("data", verified_response)
+        stored_sha256 = hashlib.sha256(verified_campaign["body"].encode("utf-8")).hexdigest()
+        if stored_sha256 != expected_sha256:
+            raise RuntimeError(
+                f"stored campaign HTML failed verification: expected {expected_sha256}, "
+                f"got {stored_sha256}"
+            )
+        return {
+            "data": verified_campaign,
+            "integrity": {
+                "sha256": stored_sha256,
+                "byte_length": len(content),
+                "verified": True,
+            },
+        }
 
     def preview(self, campaign_id: int) -> str:
         return self._request("GET", f"/api/campaigns/{campaign_id}/preview")

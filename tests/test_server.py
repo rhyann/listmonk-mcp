@@ -17,6 +17,7 @@ def test_server_exposes_only_the_intended_tools() -> None:
         "list_campaigns",
         "create_newsletter_draft",
         "update_newsletter_draft",
+        "replace_campaign_html_from_base64",
         "preview_newsletter",
         "send_newsletter_test",
         "schedule_newsletter",

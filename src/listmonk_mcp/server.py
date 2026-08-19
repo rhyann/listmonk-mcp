@@ -108,6 +108,27 @@ def update_newsletter_draft(
 
 
 @mcp.tool()
+def replace_campaign_html_from_base64(
+    campaign_id: int,
+    html_base64: str,
+    expected_sha256: str,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Replace only campaign HTML from exact base64 bytes and verify its SHA-256 after storage."""
+    try:
+        content = base64.b64decode(html_base64, validate=True)
+    except ValueError as exc:
+        raise ValueError("html_base64 must be valid base64") from exc
+    return _call(
+        "replace_campaign_html",
+        campaign_id,
+        content,
+        expected_sha256,
+        confirm=confirm,
+    )
+
+
+@mcp.tool()
 def preview_newsletter(campaign_id: int) -> str:
     """Render and return a campaign preview."""
     return _call("preview", campaign_id)
@@ -412,6 +433,7 @@ _HIGH_LEVEL_GROUPS: dict[str, set[str]] = {
         "list_campaigns",
         "create_newsletter_draft",
         "update_newsletter_draft",
+        "replace_campaign_html_from_base64",
         "preview_newsletter",
         "send_newsletter_test",
         "schedule_newsletter",

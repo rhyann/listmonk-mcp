@@ -74,6 +74,7 @@ The higher-level `list_campaigns` tool also accepts a top-level `page` argument.
 | `list_campaigns` | Lists campaigns with optional filters and explicit page selection |
 | `create_newsletter_draft` | Creates a draft only |
 | `update_newsletter_draft` | Updates only campaigns that remain drafts |
+| `replace_campaign_html_from_base64` | Replaces only the body from exact UTF-8 bytes and verifies its SHA-256 after storage; scheduled campaigns require both safety gates |
 | `preview_newsletter` | Returns Listmonk's rendered preview |
 | `send_newsletter_test` | Sends only to explicitly supplied existing subscribers; requires `confirm=true` and the sensitive-tools setting |
 | `schedule_newsletter` | Schedules a draft at an explicit ISO-8601 time |
@@ -81,8 +82,9 @@ The higher-level `list_campaigns` tool also accepts a top-level `page` argument.
 The higher-level scheduling tool verifies that the campaign is a draft before updating its
 `send_at` value and changing its status to `scheduled`.
 
-Three binary-safe tools accept base64 data rather than arbitrary host paths:
+Four binary-safe tools accept base64 data rather than arbitrary host paths:
 
+- `replace_campaign_html_from_base64`
 - `upload_media`
 - `import_subscribers`
 - `send_transactional_with_attachments`
@@ -91,6 +93,14 @@ Three binary-safe tools accept base64 data rather than arbitrary host paths:
 accepted values are `confirmed`, `unconfirmed`, and `unsubscribed`; the default is
 `confirmed`. Subscribe-mode imports require at least one target list. Blocklist-mode imports
 do not, matching Listmonk's import behavior.
+
+For byte-exact campaign updates, the agent should read the local HTML file, base64-encode its
+original bytes, calculate its SHA-256 digest, and call `replace_campaign_html_from_base64`.
+The tool changes only the campaign body while preserving its existing metadata, lists, and
+schedule. It then reads the campaign back from Listmonk and refuses to report success unless
+the stored UTF-8 body has the same SHA-256 digest. Draft updates need no sensitive-tools
+setting; updating a scheduled campaign requires `LISTMONK_ENABLE_SENSITIVE_TOOLS=true` and
+`confirm=true`. Arbitrary workspace paths and hosted URLs are intentionally not accepted.
 
 The endpoint contracts distinguish subscriber creation, full replacement (`PUT`), and partial
 updates (`PATCH`). They also enforce Listmonk's conditional mutation rules—for example,
@@ -135,7 +145,7 @@ Install the current release directly from GitHub:
 ```bash
 uv tool install \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.1"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.2"
 ```
 
 Verify the installation and find the executable Hermes should launch:
@@ -160,7 +170,7 @@ To reinstall or move to a newer release, replace the tag and run:
 ```bash
 uv tool install --reinstall \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.1"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.2"
 ```
 
 To uninstall:

@@ -257,11 +257,22 @@ def test_high_level_server_wrappers_delegate(monkeypatch: pytest.MonkeyPatch) ->
     assert server.list_campaigns("q", "draft", 2, 3)["method"] == "list_campaigns"
     assert server.create_newsletter_draft("n", "s", "b", [1], "f", 1)["method"] == "create_draft"
     assert server.update_newsletter_draft(1, "n", "s", "b", [1], "f", 1)["method"] == "update_draft"
+    encoded_html = base64.b64encode(b"<p>Hello</p>").decode()
+    assert server.replace_campaign_html_from_base64(
+        1, encoded_html, "a" * 64, True
+    )["method"] == "replace_campaign_html"
+    assert calls[-1][1][1] == b"<p>Hello</p>"
+    assert calls[-1][2] == {"confirm": True}
     assert server.preview_newsletter(1) == {"method": "preview"}
     assert server.send_newsletter_test(1, ["a@example.com"], True)["method"] == "send_test"
     assert calls[-1][2] == {"confirm": True}
     assert server.schedule_newsletter(1, "2026-01-01T00:00:00Z")["method"] == "schedule"
-    assert len(calls) == 7
+    assert len(calls) == 8
+
+
+def test_exact_html_server_tool_rejects_invalid_base64() -> None:
+    with pytest.raises(ValueError, match="valid base64"):
+        server.replace_campaign_html_from_base64(1, "%%%", "a" * 64)
 
 
 def test_generated_endpoint_tools_delegate_and_document_confirmation(
