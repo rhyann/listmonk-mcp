@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import runpy
 import warnings
@@ -273,6 +274,77 @@ def test_high_level_server_wrappers_delegate(monkeypatch: pytest.MonkeyPatch) ->
 def test_exact_html_server_tool_rejects_invalid_base64() -> None:
     with pytest.raises(ValueError, match="valid base64"):
         server.replace_campaign_html_from_base64(1, "%%%", "a" * 64)
+
+
+def test_workspace_html_tool_reads_confined_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    html = tmp_path / "campaign.html"
+    html.write_bytes(b"<p>Exact</p>\n")
+    monkeypatch.setenv("LISTMONK_WORKSPACE_ROOT", str(tmp_path))
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+    monkeypatch.setattr(
+        server,
+        "_call",
+        lambda method, *args, **kwargs: calls.append((method, args, kwargs))
+        or {"data": True},
+    )
+    assert server.replace_campaign_html_from_workspace(
+        9, "/workspace/campaign.html", True
+    )["data"]
+    expected_digest = hashlib.sha256(b"<p>Exact</p>\n").hexdigest()
+    assert calls[0] == (
+        "replace_campaign_html",
+        (9, b"<p>Exact</p>\n", expected_digest),
+        {"confirm": True},
+    )
+    assert server._read_workspace_file("campaign.html") == b"<p>Exact</p>\n"
+
+
+def test_workspace_file_access_is_opt_in_and_root_must_be_valid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.delenv("LISTMONK_WORKSPACE_ROOT", raising=False)
+    with pytest.raises(PermissionError, match="disabled"):
+        server._read_workspace_file("campaign.html")
+    monkeypatch.setenv("LISTMONK_WORKSPACE_ROOT", "relative")
+    with pytest.raises(ValueError, match="absolute path"):
+        server._read_workspace_file("campaign.html")
+    monkeypatch.setenv("LISTMONK_WORKSPACE_ROOT", str(tmp_path / "missing"))
+    with pytest.raises(ValueError, match="does not exist"):
+        server._read_workspace_file("campaign.html")
+    root_file = tmp_path / "root-file"
+    root_file.write_text("not a directory")
+    monkeypatch.setenv("LISTMONK_WORKSPACE_ROOT", str(root_file))
+    with pytest.raises(ValueError, match="directory"):
+        server._read_workspace_file("campaign.html")
+
+
+def test_workspace_file_rejects_unsafe_or_invalid_targets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside = tmp_path / "outside.html"
+    outside.write_text("outside")
+    directory = root / "folder"
+    directory.mkdir()
+    large = root / "large.html"
+    large.write_bytes(b"x" * (5 * 1024 * 1024 + 1))
+    monkeypatch.setenv("LISTMONK_WORKSPACE_ROOT", str(root))
+
+    with pytest.raises(ValueError, match="relative or begin"):
+        server._read_workspace_file(str(outside))
+    with pytest.raises(ValueError, match="identify a file"):
+        server._read_workspace_file("")
+    with pytest.raises(ValueError, match="does not exist"):
+        server._read_workspace_file("missing.html")
+    with pytest.raises(PermissionError, match="escapes"):
+        server._read_workspace_file("../outside.html")
+    with pytest.raises(ValueError, match="regular file"):
+        server._read_workspace_file("folder")
+    with pytest.raises(ValueError, match="5 MiB"):
+        server._read_workspace_file("large.html")
 
 
 def test_generated_endpoint_tools_delegate_and_document_confirmation(

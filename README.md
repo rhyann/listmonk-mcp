@@ -75,6 +75,7 @@ The higher-level `list_campaigns` tool also accepts a top-level `page` argument.
 | `create_newsletter_draft` | Creates a draft only |
 | `update_newsletter_draft` | Updates only campaigns that remain drafts |
 | `replace_campaign_html_from_base64` | Replaces only the body from exact UTF-8 bytes and verifies its SHA-256 after storage; scheduled campaigns require both safety gates |
+| `replace_campaign_html_from_workspace` | Reads HTML from an administrator-approved workspace root and automatically verifies the stored replacement |
 | `preview_newsletter` | Returns Listmonk's rendered preview |
 | `send_newsletter_test` | Sends only to explicitly supplied existing subscribers; requires `confirm=true` and the sensitive-tools setting |
 | `schedule_newsletter` | Schedules a draft at an explicit ISO-8601 time |
@@ -100,7 +101,23 @@ The tool changes only the campaign body while preserving its existing metadata, 
 schedule. It then reads the campaign back from Listmonk and refuses to report success unless
 the stored UTF-8 body has the same SHA-256 digest. Draft updates need no sensitive-tools
 setting; updating a scheduled campaign requires `LISTMONK_ENABLE_SENSITIVE_TOOLS=true` and
-`confirm=true`. Arbitrary workspace paths and hosted URLs are intentionally not accepted.
+`confirm=true`.
+
+When the base64 value is too large for one tool call, configure `LISTMONK_WORKSPACE_ROOT` as
+the absolute host path corresponding to the agent's `/workspace` mount. The agent can then
+call `replace_campaign_html_from_workspace` with either a relative path such as
+`campaign-2026-08-21.html` or `/workspace/campaign-2026-08-21.html`. The server resolves the
+path beneath the configured root, rejects traversal and symlink escapes, limits files to 5
+MiB, automatically calculates the source SHA-256, and verifies the stored body against it.
+Arbitrary host paths and hosted URLs are intentionally not accepted.
+
+```json
+{
+  "campaign_id": 9,
+  "workspace_path": "/workspace/campaign-2026-08-21.html",
+  "confirm": true
+}
+```
 
 The endpoint contracts distinguish subscriber creation, full replacement (`PUT`), and partial
 updates (`PATCH`). They also enforce Listmonk's conditional mutation rules—for example,
@@ -145,7 +162,7 @@ Install the current release directly from GitHub:
 ```bash
 uv tool install \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.2"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.3"
 ```
 
 Verify the installation and find the executable Hermes should launch:
@@ -170,7 +187,7 @@ To reinstall or move to a newer release, replace the tag and run:
 ```bash
 uv tool install --reinstall \
   --python 3.12 \
-  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.2"
+  "git+https://github.com/rhyann/listmonk-mcp.git@v0.5.3"
 ```
 
 To uninstall:
@@ -203,6 +220,7 @@ export LISTMONK_USER="hermes_newsletter"
 export LISTMONK_TOKEN="replace-me"
 export LISTMONK_ENABLE_SENSITIVE_TOOLS="false"
 export LISTMONK_TOOL_GROUPS="all"
+export LISTMONK_WORKSPACE_ROOT="/home/rhyann/weekly-newsletter"
 ```
 
 ### Limit exposed tool groups
@@ -284,14 +302,17 @@ mcp_servers:
       LISTMONK_URL: "${LISTMONK_URL}"
       LISTMONK_USER: "${LISTMONK_USER}"
       LISTMONK_TOKEN: "${LISTMONK_TOKEN}"
-      LISTMONK_ENABLE_SENSITIVE_TOOLS: "false"
+      LISTMONK_ENABLE_SENSITIVE_TOOLS: "true"
       LISTMONK_TOOL_GROUPS: "campaigns"
+      LISTMONK_WORKSPACE_ROOT: "/home/rhyann/weekly-newsletter"
     tools:
       include:
         - get_campaign
         - list_campaigns
         - create_newsletter_draft
         - update_newsletter_draft
+        - replace_campaign_html_from_base64
+        - replace_campaign_html_from_workspace
         - preview_newsletter
         - send_newsletter_test
         - schedule_newsletter

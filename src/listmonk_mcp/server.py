@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import base64
+import hashlib
 import inspect
 import json
+from pathlib import Path
 from typing import Any, Literal
 
 from mcp.server import MCPServer
@@ -124,6 +126,64 @@ def replace_campaign_html_from_base64(
         campaign_id,
         content,
         expected_sha256,
+        confirm=confirm,
+    )
+
+
+def _read_workspace_file(workspace_path: str) -> bytes:
+    root_value = os.environ.get("LISTMONK_WORKSPACE_ROOT", "").strip()
+    if not root_value:
+        raise PermissionError(
+            "workspace file access is disabled; set LISTMONK_WORKSPACE_ROOT"
+        )
+    root_input = Path(root_value)
+    if not root_input.is_absolute():
+        raise ValueError("LISTMONK_WORKSPACE_ROOT must be an absolute path")
+    try:
+        root = root_input.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError("LISTMONK_WORKSPACE_ROOT does not exist") from exc
+    if not root.is_dir():
+        raise ValueError("LISTMONK_WORKSPACE_ROOT must identify a directory")
+
+    if workspace_path.startswith("/workspace/"):
+        relative_path = workspace_path.removeprefix("/workspace/")
+    else:
+        supplied_path = Path(workspace_path)
+        if supplied_path.is_absolute():
+            raise ValueError(
+                "workspace_path must be relative or begin with /workspace/"
+            )
+        relative_path = workspace_path
+    if not relative_path:
+        raise ValueError("workspace_path must identify a file")
+
+    try:
+        candidate = (root / relative_path).resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError(f"workspace file does not exist: {workspace_path}") from exc
+    if not candidate.is_relative_to(root):
+        raise PermissionError("workspace_path escapes LISTMONK_WORKSPACE_ROOT")
+    if not candidate.is_file():
+        raise ValueError("workspace_path must identify a regular file")
+    if candidate.stat().st_size > 5 * 1024 * 1024:
+        raise ValueError("campaign HTML file exceeds the 5 MiB limit")
+    return candidate.read_bytes()
+
+
+@mcp.tool()
+def replace_campaign_html_from_workspace(
+    campaign_id: int,
+    workspace_path: str,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Replace campaign HTML from a confined file and verify its integrity automatically."""
+    content = _read_workspace_file(workspace_path)
+    return _call(
+        "replace_campaign_html",
+        campaign_id,
+        content,
+        hashlib.sha256(content).hexdigest(),
         confirm=confirm,
     )
 
@@ -434,6 +494,7 @@ _HIGH_LEVEL_GROUPS: dict[str, set[str]] = {
         "create_newsletter_draft",
         "update_newsletter_draft",
         "replace_campaign_html_from_base64",
+        "replace_campaign_html_from_workspace",
         "preview_newsletter",
         "send_newsletter_test",
         "schedule_newsletter",
